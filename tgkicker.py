@@ -1,8 +1,13 @@
-import random, threading, os
+import random, threading, os, logging
 from queue import Queue
 from telegram import Bot, ChatMemberUpdated, Update
 from telegram.ext import MessageHandler, Filters, ChatMemberHandler, CallbackContext, Dispatcher, Updater
 from dotenv import load_dotenv
+
+# Set up logging
+logging.basicConfig(format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
+                    level=logging.INFO)
+logger = logging.getLogger(__name__)
 
 #import var values
 load_dotenv()
@@ -10,7 +15,7 @@ load_dotenv()
 TELEGRAM_BOT_TOKEN = os.getenv('TELEGRAM_BOT_TOKEN')
 TELEGRAM_GROUP_ADMIN_ID = os.getenv('TELEGRAM_GROUP_ADMIN_ID')
 
-# This dict will hold the arithmetic tasks for each user
+# This dict will hold the arithmetic tasks and message ids for each user
 tasks = {}
 
 def arithmetic_task():
@@ -25,12 +30,13 @@ def new_member(update: Update, context: CallbackContext) -> None:
         if member.id != context.bot.id:
             question, answer = arithmetic_task()
             # Use a tuple of (chat_id, user_id) as the key
-            tasks[(update.effective_chat.id, member.id)] = answer
             greeting_message = context.bot.send_message(chat_id=update.effective_chat.id,
                                      text=f"Hello {member.username}, what's {question}? You have 30 seconds to answer.",
                                      timeout=15)
+            logger.info(f"Asked question to new member {member.username} in chat {update.effective_chat.id}")
             # Save the message_id of the greeting message
             greeting_message_id = greeting_message.message_id
+            tasks[(update.effective_chat.id, member.id)] = (answer, greeting_message_id)
             # Set a 30-second timer to check if the user has answered
             threading.Timer(61, check_answer, args=[update, context, member.id, greeting_message_id]).start()
 
@@ -38,21 +44,26 @@ def check_answer(update: Update, context: CallbackContext, user_id: int, greetin
     # Use a tuple of (chat_id, user_id) as the key
     if (update.effective_chat.id, user_id) in tasks:
         # The user did not answer in time, remove them from the group
-        context.bot.send_message(chat_id=update.effective_chat.id, text="Time's up! You will be removed.", timeout=15)
         context.bot.ban_chat_member(chat_id=update.effective_chat.id, user_id=user_id, timeout=15)
         context.bot.unban_chat_member(chat_id=update.effective_chat.id, user_id=user_id, timeout=15)
+        logger.info(f"Removed user {user_id} from chat {update.effective_chat.id} due to timeout")
         # Delete the greeting message
         context.bot.delete_message(chat_id=update.effective_chat.id, message_id=greeting_message_id, timeout=15)
 
-
 def message(update: Update, context: CallbackContext) -> None:
-    if (update.effective_chat.id, update.effective_user.id) in tasks and int(update.message.text) == tasks[(update.effective_chat.id, update.effective_user.id)]:
+    if (update.effective_chat.id, update.effective_user.id) in tasks and int(update.message.text) == tasks[(update.effective_chat.id, update.effective_user.id)][0]:
+        # Get the greeting message id before deleting the task
+        greeting_message_id = tasks[(update.effective_chat.id, update.effective_user.id)][1]
         del tasks[(update.effective_chat.id, update.effective_user.id)]
-        # context.bot.send_message(chat_id=update.effective_chat.id, text="Correct!") # sending "correct" upon correct answer
+        logger.info(f"User {update.effective_user.id} answered correctly in chat {update.effective_chat.id}")
+        # Delete the arithmetic question message
+        context.bot.delete_message(chat_id=update.effective_chat.id, message_id=greeting_message_id, timeout=15)
+        # Delete the user's answer message
+        context.bot.delete_message(chat_id=update.effective_chat.id, message_id=update.message.message_id, timeout=15)
     else:
-        # context.bot.send_message(chat_id=update.effective_chat.id, text="Wrong answer. You will be removed.")
         context.bot.ban_chat_member(chat_id=update.effective_chat.id, user_id=update.effective_user.id, timeout=15)
         context.bot.unban_chat_member(chat_id=update.effective_chat.id, user_id=update.effective_user.id, timeout=15)
+        logger.info(f"Removed user {update.effective_user.id} from chat {update.effective_chat.id} due to incorrect answer")
 
 
 def main() -> None:
@@ -68,7 +79,7 @@ def main() -> None:
 
 def delete_system_message(update: Update, context: CallbackContext) -> None:
     context.bot.delete_message(chat_id=update.effective_chat.id, message_id=update.message.message_id, timeout=15)
-
+    logger.info(f"Deleted system message in chat {update.effective_chat.id}")
 
 if __name__ == '__main__':
     main()

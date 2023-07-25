@@ -24,7 +24,8 @@ def new_member(update: Update, context: CallbackContext) -> None:
     for member in update.message.new_chat_members:
         if member.id != context.bot.id:
             question, answer = arithmetic_task()
-            tasks[member.id] = answer
+            # Use a tuple of (chat_id, user_id) as the key
+            tasks[(update.effective_chat.id, member.id)] = answer
             greeting_message = context.bot.send_message(chat_id=update.effective_chat.id,
                                      text=f"Hello {member.username}, what's {question}? You have 30 seconds to answer.",
                                      timeout=15)
@@ -34,23 +35,25 @@ def new_member(update: Update, context: CallbackContext) -> None:
             threading.Timer(61, check_answer, args=[update, context, member.id, greeting_message_id]).start()
 
 def check_answer(update: Update, context: CallbackContext, user_id: int, greeting_message_id: int) -> None:
-    if user_id in tasks:
+    # Use a tuple of (chat_id, user_id) as the key
+    if (update.effective_chat.id, user_id) in tasks:
         # The user did not answer in time, remove them from the group
-        # context.bot.send_message(chat_id=update.effective_chat.id, text="Time's up! You will be removed.", timeout=15)
+        context.bot.send_message(chat_id=update.effective_chat.id, text="Time's up! You will be removed.", timeout=15)
         context.bot.ban_chat_member(chat_id=update.effective_chat.id, user_id=user_id, timeout=15)
         context.bot.unban_chat_member(chat_id=update.effective_chat.id, user_id=user_id, timeout=15)
         # Delete the greeting message
-        context.bot.delete_message(chat_id=update.effective_chat.id, message_id=greeting_message_id)
+        context.bot.delete_message(chat_id=update.effective_chat.id, message_id=greeting_message_id, timeout=15)
 
 
 def message(update: Update, context: CallbackContext) -> None:
-    if update.effective_user.id in tasks and int(update.message.text) == tasks[update.effective_user.id]:
-        del tasks[update.effective_user.id]
+    if (update.effective_chat.id, update.effective_user.id) in tasks and int(update.message.text) == tasks[(update.effective_chat.id, update.effective_user.id)]:
+        del tasks[(update.effective_chat.id, update.effective_user.id)]
         # context.bot.send_message(chat_id=update.effective_chat.id, text="Correct!") # sending "correct" upon correct answer
     else:
         # context.bot.send_message(chat_id=update.effective_chat.id, text="Wrong answer. You will be removed.")
         context.bot.ban_chat_member(chat_id=update.effective_chat.id, user_id=update.effective_user.id, timeout=15)
         context.bot.unban_chat_member(chat_id=update.effective_chat.id, user_id=update.effective_user.id, timeout=15)
+
 
 def main() -> None:
     updater = Updater(token=TELEGRAM_BOT_TOKEN, use_context=True)
